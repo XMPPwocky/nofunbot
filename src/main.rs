@@ -3,7 +3,16 @@
 #[phase(plugin, link)]
 extern crate log;
 
+#[phase(plugin, link)]
+extern crate regex_macros;
+extern crate regex;
+
+extern crate time;
+
 extern crate irc = "rust-irclib";
+
+use std::str::IntoMaybeOwned;
+use std::collections::HashMap;
 
 use irc::conn::{
   Conn,
@@ -14,6 +23,8 @@ use irc::conn::{
   Line,
 };
 
+mod rules;
+
 fn main() {
   info!("nofunbot starting up...");
 
@@ -22,9 +33,12 @@ fn main() {
     server: "irc.quakenet.org".to_string(),
     port: 6667,
 
+    patience: 5,
+    annoyance_cooldown: 30,
+
     channels: vec![Channel {
       chantype: Moderate,
-      name: "#r/globaloffensive".to_string() 
+      name: "#nofunbot".to_string() 
     }]
   });
 }
@@ -44,17 +58,26 @@ pub struct Config {
   nick: String,
   server: String,
   port: u16,
+  
+  patience: u32, // max patience
+  annoyance_cooldown: u32,
 
   channels: Vec<Channel>
 }
 
+pub struct UserState {
+  annoyance: u32,
+  last_annoyance: i64 // unix time
+}
+
 pub struct NoFunBot {
-  config: Config
+  config: Config,
+  users: HashMap<String, UserState> 
 }
 
 impl NoFunBot {
   pub fn launch(config: Config) {
-    let mut bot = NoFunBot { config: config.clone() };
+    let mut bot = NoFunBot { config: config.clone(), users: HashMap::new() };
 
     let mut ircopts = irc::conn::Options::new(config.server.as_slice(), config.port);
     ircopts.nick = config.nick.as_slice();
@@ -79,10 +102,20 @@ impl NoFunBot {
           conn.join(channel.name.as_bytes(), [])
         }
       },
+      Line{command: IRCCode(353), ref args, ..} => {
+        // NAMES
+        // first 3 args are our nick, "=", channel name
+        args.as_slice().get(3).map(|names_bytes| String::from_utf8_lossy(names_bytes.as_slice()).to_owned())
+          .map(|names|
+               for name in names.as_slice().split(' ') { // space delimited
+                 self.add_user(name.to_owned());
+               });
+      }
       Line{command: IRCCmd(cmd), args, prefix: prefix } => match cmd.as_slice() {
         "JOIN" if prefix.is_some() => {
           let prefix = prefix.unwrap();
           if prefix.nick() != conn.me().nick() {
+            self.add_user(String::from_utf8_lossy(prefix.nick()).to_owned());
             return;
           }
           if args.is_empty() {
@@ -94,7 +127,14 @@ impl NoFunBot {
           let chan = args.move_iter().next().unwrap();
           let chan = String::from_utf8_lossy(chan.as_slice());
           info!("JOINED: {}", chan);
-        }
+        },
+        "PART" if prefix.is_some() => {
+          let prefix = prefix.unwrap();
+          if prefix.nick() != conn.me().nick() {
+            self.remove_user(String::from_utf8_lossy(prefix.nick()).to_owned());
+            return;
+          }
+        },
         "PRIVMSG" | "NOTICE" => {
           let (src, dst, msg) = match prefix {
             Some(_) if args.len() == 2 => {
@@ -140,9 +180,10 @@ impl NoFunBot {
     info!("{} -> {}: {}", src, dst, msg);
 
     if dst.as_slice().starts_with("#") {
-      match self.config.channels.iter().find(|chan| chan.name == dst) {
+      let maybe_chan = self.config.channels.iter().find(|chan| chan.name == dst).map(|x| x.clone());
+      match maybe_chan {
         Some(channel) => {
-          self.moderate(conn, src, channel.clone(), msg)
+          self.moderate(conn, src, &channel, msg)
         },
         None => {
           debug!("Silently ignoring...");
@@ -152,8 +193,40 @@ impl NoFunBot {
   }
 
   pub fn moderate(&mut self, conn: &mut Conn, nick: String, channel: &Channel, msg: String) {
-      if msg.as_slice() == "hi i'm beasway" {
-         conn.privmsg(channel.name.as_bytes(), b"BOOO!");
-      }
+    let userstate = self.users.get_mut(&nick);
+    
+    let cooldowns_elapsed = (time::get_time().sec - userstate.last_annoyance) as u32 / self.config.annoyance_cooldown;
+    if cooldowns_elapsed > 0 {
+      userstate.annoyance /= cooldowns_elapsed;
+    }
+    
+    let score = rules::score(&msg);
+    if score == 0 { return }
+    else { // you dun goofed
+      // TODO: check for op
+      conn.privmsg(channel.name.as_bytes(), format!("{}: Please read the channel rules: http://goo.gl/4T6EZR . If you do not follow these rules, you may be kicked!", nick).as_bytes());
+      userstate.annoyance += score;
+      userstate.last_annoyance = time::get_time().sec;
+    }
+    
+    info!("Annoyance level of {}: {}", nick, userstate.annoyance);
+
+    if userstate.annoyance > self.config.patience {
+      info!("Kicking!");
+    }
+    //conn.send_command(IRCCmd("KICK".into_maybe_owned()),
+      //                  [channel.name.as_bytes(), nick.as_bytes(), b"Source was the best CS."], true);
+  }
+  pub fn add_user(&mut self, nick_str: String) {
+    //let nick_str = String::from_utf8_lossy(user.nick().as_slice()).to_owned();
+    info!("Adding user w/ nick {}", nick_str);
+    self.users.insert(nick_str, UserState { annoyance: 0, last_annoyance: 0 });
+    debug!("I know about {} users", self.users.len());
+  }
+  pub fn remove_user(&mut self, nick_str: String) {
+    //let nick_str = String::from_utf8_lossy(user.nick().as_slice()).to_owned();
+    info!("Removing user w/ nick {}", nick_str);
+    self.users.remove(&nick_str);
+    debug!("{} users left...", self.users.len());
   }
 }
