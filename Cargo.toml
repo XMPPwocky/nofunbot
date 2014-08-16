@@ -1,0 +1,8 @@
+[package]
+
+name = "nofunbot"
+version = "0.0.1"
+authors = ["XMPPwocky"]
+
+[dependencies.rust-irclib]
+git = "https://github.com/XMPPwocky/rust-irclib"
