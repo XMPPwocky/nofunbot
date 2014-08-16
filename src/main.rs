@@ -151,7 +151,7 @@ impl NoFunBot {
     }
   }
 
-  pub fn moderate(&self, conn: &mut Conn, nick: String, channel: &Channel, msg: String) {
+  pub fn moderate(&mut self, conn: &mut Conn, nick: String, channel: &Channel, msg: String) {
       if msg.as_slice() == "hi i'm beasway" {
          conn.privmsg(channel.name.as_bytes(), b"BOOO!");
       }
