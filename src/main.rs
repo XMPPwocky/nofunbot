@@ -94,7 +94,7 @@ impl NoFunBot {
           let srcs = String::from_utf8_lossy(src.as_slice());
           let msgs = String::from_utf8_lossy(msg.as_slice());
           println!("<-- {}({}) {}: {}", cmd, dsts, srcs, msgs);
-          // handle_privmsg(conn, msg.as_slice(), src, dst.as_slice())
+          self.handle_privmsg(conn, msg.as_slice(), src, dst.as_slice())
         }
         _ => ()
       },
@@ -117,5 +117,8 @@ impl NoFunBot {
       }
       _ => ()
     }
+  }
+  pub fn handle_privmsg(&mut self, conn, msg: &[u8], src: &[u8], dst: &[u8]) {
+      info!("message");
   }
 }
