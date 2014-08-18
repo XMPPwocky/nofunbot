@@ -6,3 +6,6 @@ authors = ["XMPPwocky"]
 
 [dependencies.rust-irclib]
 git = "https://github.com/XMPPwocky/rust-irclib"
+
+[dependencies.chrono]
+git = "https://github.com/lifthrasiir/rust-chrono"
