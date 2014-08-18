@@ -13,7 +13,9 @@ extern crate chrono;
 extern crate irc = "rust-irclib";
 
 use std::str::IntoMaybeOwned;
-use std::collections::HashMap;
+
+pub use std::collections::HashMap;
+pub use usermanager::UserState;
 
 use irc::conn::{
   Conn,
@@ -26,10 +28,14 @@ use irc::conn::{
 
 use chrono::{
   DateTime,
+  Duration,
   UTC
 };
 
+mod banmanager;
+mod channelmanager;
 mod rules;
+mod usermanager;
 
 fn main() {
   info!("nofunbot starting up...");
@@ -38,17 +44,6 @@ fn main() {
     nick: "NoFunBot".to_string(),
     server: "irc.quakenet.org".to_string(),
     port: 6667,
-
-    channels: vec!(
-      Channel {
-        chantype: Moderate,
-        name: "#r/globaloffensive".to_string()
-      },
-      Channel {
-        chantype: Control,
-        name: "#gobotmods".to_string()
-      }
-      )
   });
 }
 pub enum RulesCheckResult {
@@ -56,63 +51,28 @@ pub enum RulesCheckResult {
   RulesOK
 }
 
-#[deriving(Clone, PartialEq)]
-pub enum ChannelType {
-  Moderate, // we mod this channel
-    Control // we are controlled here
-}
-#[deriving(Clone)]
-pub struct Channel {
-  name: String,
-  chantype: ChannelType
-}
 #[deriving(Clone)]
 pub struct Config {
   nick: String,
   server: String,
   port: u16,
-
-  channels: Vec<Channel>
 }
 
-pub struct UserState {
-  infractions: u32,
-
-  ban_expiration: Option<DateTime<UTC>>,
-
-  last_message_time: DateTime<UTC>,
-  last_message: String,
-
-  // consecutive "one word per line" messages
-  simple_msg_count: u32
-}
-impl UserState {
-  pub fn new() -> UserState {
-    UserState {
-      infractions: 0,
-
-      last_message: "".to_string(),
-      last_message_time: chrono::UTC::now(),
-
-      ban_expiration: None,
-
-      simple_msg_count: 0
-    }
-  }
-}
 pub struct NoFunBot {
   config: Config,
-  users: HashMap<String, UserState> 
+  banmgr: banmanager::BanManager,
+  chanmgr: channelmanager::ChannelManager,
+  usermgr: usermanager::UserManager
 }
 
-pub fn log_to_control_channels(config: &Config, conn: &mut Conn, msg: &str) {
-  for channel in config.channels.iter().filter(|chan| chan.chantype == Control) {
-    conn.privmsg(channel.name.as_bytes(), msg.as_bytes());
-  }
-}
 impl NoFunBot {
   pub fn launch(config: Config) {
-    let mut bot = NoFunBot { config: config.clone(), users: HashMap::new() };
+    let mut bot = NoFunBot {
+      config: config.clone(),
+      banmgr: banmanager::BanManager::new(),
+      chanmgr: channelmanager::ChannelManager::new(),
+      usermgr: usermanager::UserManager::new()
+    };
 
     let mut ircopts = irc::conn::Options::new(config.server.as_slice(), config.port);
     ircopts.nick = config.nick.as_slice();
@@ -130,12 +90,13 @@ impl NoFunBot {
     }
   }
   pub fn handle_line(&mut self, conn: &mut Conn, line: Line) {
+    // clear expired bans, etc.
+    self.banmgr.update(conn);
+
     match line {
       Line{command: IRCCode(1), ..} => {
         info!("Logged in");
-        for channel in self.config.channels.iter() {
-          conn.join(channel.name.as_bytes(), [])
-        }
+        self.chanmgr.join_channels(conn);
       },
       Line{command: IRCCode(353), ref args, ..} => {
         // NAMES
@@ -143,23 +104,18 @@ impl NoFunBot {
         args.as_slice().get(3).map(|names_bytes| String::from_utf8_lossy(names_bytes.as_slice()).to_string())
           .map(|names|
                for name in names.as_slice().split(' ').map(|s| regex!(r"^[@+]").replace_all(s, "")) { // space delimited
-                 self.add_user(name)
+                 self.chanmgr.handle_join(String::from_utf8_lossy(args[2].as_slice()).as_slice(), name.as_slice())
                });
       }
       Line{command: IRCCmd(cmd), args, prefix: prefix } => match cmd.as_slice() {
         "JOIN" if prefix.is_some() => {
           let prefix = prefix.unwrap();
           if prefix.nick() != conn.me().nick() {
-            let nick = String::from_utf8_lossy(prefix.nick()).to_string();
-            let userstate = self.users.find_or_insert_with(nick.clone(), |_| UserState::new());
-            match userstate.ban_expiration { 
-              Some(exptime) if exptime > chrono::UTC::now() => {
-                let kickmsg = format!("You are still banned for {} seconds!", (exptime - chrono::UTC::now()).num_seconds());
-                conn.send_command(IRCCmd("KICK".into_maybe_owned()),
-                                  [args.move_iter().next().unwrap(), nick.clone().into_bytes(), kickmsg.into_bytes()], true);
-              }, 
-                _ => ()
-            }
+            let nick_bytes = prefix.nick();
+            let nick = String::from_utf8_lossy(nick_bytes);
+            let nick = nick.as_slice(); // borrow checker malarkey
+            let userstate = self.usermgr.get_or_create(nick);
+            self.chanmgr.handle_join(String::from_utf8_lossy(args[0].as_slice()).as_slice(), nick);
             return;
           }
           if args.is_empty() {
@@ -171,12 +127,16 @@ impl NoFunBot {
           let chan = args.move_iter().next().unwrap();
           let chan = String::from_utf8_lossy(chan.as_slice());
           info!("JOINED: {}", chan);
+          self.chanmgr.join_ok(chan.as_slice());
         },
         "PART" if prefix.is_some() => {
           let prefix = prefix.unwrap();
           if prefix.nick() != conn.me().nick() {
             info!("{} left channel", String::from_utf8_lossy(prefix.nick()).to_string());
-            //self.remove_user(String::from_utf8_lossy(prefix.nick()).to_string())
+            self.chanmgr.handle_part(
+              String::from_utf8_lossy(args[0].as_slice()).as_slice(),
+              String::from_utf8_lossy(prefix.nick()).as_slice()
+            );
           }
         },
         "PRIVMSG" | "NOTICE" => {
@@ -223,26 +183,73 @@ impl NoFunBot {
   pub fn handle_privmsg(&mut self, conn: &mut Conn, msg: String, src: String, dst: String) {
     info!("{} -> {}: {}", src, dst, msg);
 
-    if dst.as_slice().starts_with("#") {
-      let maybe_chan = self.config.channels.iter().find(|chan| chan.name == dst).map(|x| x.clone());
-      match maybe_chan {
-        Some(channel) => {
-          self.moderate(conn, src, &channel, msg)
-        },
-        None => {
-          debug!("Silently ignoring...");
-        }
-      }
-    }
-  }
-  pub fn moderate(&mut self, conn: &mut Conn, nick: String, channel: &Channel, msg: String) {
-    if ["Crate", "goBot", "face", "YouTube", "weeedbot"].iter().find(|&&n| n == nick.as_slice()).is_some() {
+    if ["Crate", "goBot", "face", "YouTube", "weeedbot"].iter().find(|&&n| n == src.as_slice()).is_some() {
       debug!("ignoring bot...");
       return;
     }
 
-    let &NoFunBot{users: ref mut users, config: ref mut cfg} = self;
-    let userstate = users.find_or_insert_with(nick.clone(), |_| UserState::new());
+    if dst.as_slice().starts_with("#") {
+      let valid_command = if msg.as_slice().starts_with(self.config.nick.as_slice()) {
+        // we are being addressed!
+        // m'lady
+        let mut args: Vec<&str> = msg.as_slice().split(' ').collect();
+        debug!("{}", args);
+        if args.len() > 0 {
+          *args.get_mut(0) = args.get(0).trim_right_chars(':');
+        }
+        let mynick = self.config.nick.as_slice();
+        match args.as_slice() {
+          [mynick, "stopword", word] => {
+            if self.chanmgr.nick_in_control_channels(src.as_slice()) {
+              //self.stopword(word)
+              true
+            } else {
+              false
+            }
+          },
+          [mynick, "forgive", target_nick] => {
+            if self.chanmgr.nick_in_control_channels(src.as_slice()) {
+              info!("Forgiving {} by {}'s request...", target_nick, src)
+              self.chanmgr.log_to_control_channels(conn, format!("{} forgave {}...", src, target_nick).as_slice());
+              self.usermgr.get_or_create(target_nick).infractions = 0;
+              true
+            } else {
+              false
+            }
+          },
+          [mynick, "ban_length", len_str] => {
+            if self.chanmgr.nick_in_control_channels(src.as_slice()) {
+              match std::from_str::FromStr::from_str(len_str) {
+                Some(len) => {
+                  self.banmgr.set_ban_length(Duration::minutes(len));
+                  self.chanmgr.log_to_control_channels(conn, format!("{} set ban length to {}m", src, len_str).as_slice());
+                  true
+                },
+                None => {
+                  warn!("Invalid ban length!");
+                  false
+                }
+              }
+            } else {
+              false
+            }
+          },
+          _ => {
+            warn!("Unknown command from {}: {}", src, msg);
+            false
+          }
+        }
+      } else {
+        false
+      };
+
+      if !valid_command {
+        self.moderate(conn, src, dst.as_slice(), msg)
+      }
+    }
+  }
+  pub fn moderate(&mut self, conn: &mut Conn, nick: String, channel: &str, msg: String) {
+    let userstate = self.usermgr.get_or_create(nick.as_slice());
     
     match rules::check(msg.as_slice(), userstate) {
       Infraction(warn_msg) => {
@@ -257,15 +264,14 @@ impl NoFunBot {
                                                 2 - userstate.infractions,
                                                 if (2 - userstate.infractions == 1) {""} else {"s"}
                                                ).as_bytes());
-          log_to_control_channels(cfg, conn, format!("Warning {}: {} {} infractions.", nick, warn_msg, userstate.infractions).as_slice()); 
+          self.chanmgr.log_to_control_channels(conn, format!("Warning {}: {} {} infractions.", nick, warn_msg, userstate.infractions).as_slice()); 
         } else {
           info!("Kicking!");
 
           userstate.infractions = 0;
           userstate.ban_expiration = Some(chrono::UTC::now() + chrono::duration::Duration::minutes(30));
-          log_to_control_channels(cfg, conn, format!("Banning {}: {}", nick, warn_msg).as_slice());
-          conn.send_command(IRCCmd("KICK".into_maybe_owned()),
-                            [channel.name.as_bytes(), nick.as_bytes(), b"Banned for 30min"], true);
+          self.chanmgr.log_to_control_channels(conn, format!("Banning {}: {}", nick, warn_msg).as_slice());
+          self.banmgr.ban(conn, channel, nick.as_slice());
         }
       },
       RulesOK => ()
@@ -274,18 +280,4 @@ impl NoFunBot {
     userstate.last_message_time = chrono::UTC::now();
     userstate.last_message = msg;
   }
-  pub fn add_user(&mut self, nick_str: String) {
-    //let nick_str = String::from_utf8_lossy(user.nick().as_slice()).to_string();
-    info!("Adding user w/ nick {}", nick_str);
-    self.users.insert(nick_str, UserState::new());
-    debug!("I know about {} users", self.users.len());
-  }
-  /*
-     pub fn remove_user(&mut self, nick_str: String) {
-//let nick_str = String::from_utf8_lossy(user.nick().as_slice()).to_string();
-info!("Removing user w/ nick {}", nick_str);
-self.users.remove(&nick_str);
-debug!("{} users left...", self.users.len());
-}
-   */
 }

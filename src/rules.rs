@@ -1,5 +1,4 @@
 use irc::conn::Conn;
-use Channel;
 use flate;
 use chrono;
 
@@ -39,7 +38,7 @@ pub fn check(msg: &str, state: &mut ::UserState) -> ::RulesCheckResult {
   }
 
   if msg.len() > 6 && msg == state.last_message.as_slice()
-    && (chrono::UTC::now() - state.last_message_time).num_seconds() < 10 {
+    && (chrono::UTC::now() - state.last_message_time).num_seconds() < 2 {
       return Infraction("Is there an echo in here?")
     }
 
