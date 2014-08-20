@@ -26,11 +26,7 @@ use irc::conn::{
   Line,
 };
 
-use chrono::{
-  DateTime,
-  Duration,
-  UTC
-};
+use chrono::Duration;
 
 mod banmanager;
 mod channelmanager;
@@ -122,7 +118,7 @@ impl NoFunBot {
             let nick_bytes = prefix.nick();
             let nick = String::from_utf8_lossy(nick_bytes);
             let nick = nick.as_slice(); // borrow checker malarkey
-            let userstate = self.usermgr.get_or_create(nick);
+            //let userstate = self.usermgr.get_or_create(nick);
             self.chanmgr.handle_join(String::from_utf8_lossy(args[0].as_slice()).as_slice(), nick);
             return;
           }
@@ -170,7 +166,7 @@ impl NoFunBot {
         _ => ()
       },
       Line{command: IRCAction(dst), args, prefix } => {
-        let (src, msg) = match prefix {
+        match prefix {
           Some(_) if args.len() == 1 => {
             let msg = args.move_iter().next().unwrap();
             (prefix.as_ref().unwrap().nick(), msg)
@@ -181,9 +177,10 @@ impl NoFunBot {
             return;
           }
         };
-        let dst = String::from_utf8_lossy(dst.as_slice());
-        let src = String::from_utf8_lossy(src.as_slice());
-        let msg = String::from_utf8_lossy(msg.as_slice());
+        //let dst = String::from_utf8_lossy(dst.as_slice());
+        //let src = String::from_utf8_lossy(src.as_slice());
+        //let msg = String::from_utf8_lossy(msg.as_slice());
+        warn!("Ignoring action (not implemented)");
       }
       _ => ()
     }
@@ -209,20 +206,19 @@ impl NoFunBot {
 
         // "NoFunBot:"
         if args.len() > 0 {
-          *args.get_mut(0) = args.get(0).trim_right_chars(':');
+          *args.get_mut(0) = args[0].trim_right_chars(':');
         }
 
-        let mynick = self.config.nick.as_slice();
         match args.as_slice() {
-          [mynick, "stopword", word] => {
+          /*[_mynick, "stopword", word] => {
             if self.chanmgr.nick_in_control_channels(src.as_slice()) {
               //self.stopword(word)
               true
             } else {
               false
             }
-          },
-          [mynick, "forgive", target_nick] => {
+          },*/
+          [_mynick, "forgive", target_nick] => {
             if self.chanmgr.nick_in_control_channels(src.as_slice()) {
               info!("Forgiving {} by {}'s request...", target_nick, src)
               self.chanmgr.log_to_control_channels(conn, format!("{} forgave {}...", src, target_nick).as_slice());
@@ -232,7 +228,7 @@ impl NoFunBot {
               false
             }
           },
-          [mynick, "ban_length", len_str] => {
+          [_mynick, "ban_length", len_str] => {
             if self.chanmgr.nick_in_control_channels(src.as_slice()) {
               match std::from_str::FromStr::from_str(len_str) {
                 Some(len) => {
@@ -277,7 +273,7 @@ impl NoFunBot {
           conn.privmsg(nick.as_bytes(), format!("{} Please read the channel rules: http://goo.gl/4T6EZR . After {} more infraction{}, you will be banned for {}m!",
                                                 warn_msg,
                                                 3 - userstate.infractions,
-                                                if (3 - userstate.infractions == 1) {""} else {"s"},
+                                                if 3 - userstate.infractions == 1 {""} else {"s"},
                                                 self.banmgr.get_ban_length().num_minutes()
                                                ).as_bytes());
           self.chanmgr.log_to_control_channels(conn, format!("Warning {}: {} {} infractions.", nick, warn_msg, userstate.infractions).as_slice()); 

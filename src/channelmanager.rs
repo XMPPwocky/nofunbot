@@ -1,5 +1,4 @@
 use std::collections::{HashMap, HashSet};
-use irc;
 use irc::conn::Conn;
 
 #[deriving(Clone, PartialEq)]

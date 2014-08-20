@@ -1,8 +1,7 @@
-use irc::conn::Conn;
 use flate;
 use chrono;
 
-use {RulesCheckResult, Infraction, RulesOK};
+use {Infraction, RulesOK};
 pub fn check(msg: &str, state: &mut ::UserState) -> ::RulesCheckResult {
   let time_since_last = chrono::UTC::now() - state.last_message_time;
   debug!("Scoring message: {}", msg);
