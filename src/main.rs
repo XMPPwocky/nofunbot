@@ -9,6 +9,7 @@ extern crate regex;
 
 extern crate flate;
 extern crate chrono;
+extern crate serialize;
 
 extern crate irc = "rust-irclib";
 
@@ -49,7 +50,7 @@ pub enum RulesCheckResult {
   RulesOK
 }
 
-#[deriving(Clone)]
+#[deriving(Clone, Decodable)]
 pub struct Config {
   nick: String,
   server: String,
@@ -108,7 +109,8 @@ impl NoFunBot {
         args.as_slice().get(3).map(|names_bytes| String::from_utf8_lossy(names_bytes.as_slice()).to_string())
           .map(|names|
                for name in names.as_slice().split(' ').map(|s| regex!(r"^[@+]").replace_all(s, "")) { // space delimited
-                 self.chanmgr.handle_join(String::from_utf8_lossy(args[2].as_slice()).as_slice(), name.as_slice())
+                 self.chanmgr.find_mut(String::from_utf8_lossy(args[2].as_slice()).as_slice())
+                   .map(|chan| chan.handle_join(name.as_slice()));
                });
       }
       Line{command: IRCCmd(cmd), args, prefix: prefix } => match cmd.as_slice() {
@@ -119,7 +121,8 @@ impl NoFunBot {
             let nick = String::from_utf8_lossy(nick_bytes);
             let nick = nick.as_slice(); // borrow checker malarkey
             //let userstate = self.usermgr.get_or_create(nick);
-            self.chanmgr.handle_join(String::from_utf8_lossy(args[0].as_slice()).as_slice(), nick);
+            self.chanmgr.find_mut(String::from_utf8_lossy(args[0].as_slice()).as_slice())
+              .map(|chan| chan.handle_join(nick));
             return;
           }
           if args.is_empty() {
@@ -131,16 +134,14 @@ impl NoFunBot {
           let chan = args.move_iter().next().unwrap();
           let chan = String::from_utf8_lossy(chan.as_slice());
           info!("JOINED: {}", chan);
-          self.chanmgr.join_ok(chan.as_slice());
+          self.chanmgr.find_mut(chan.as_slice()).map(|chan| chan.join_ok());
         },
         "PART" if prefix.is_some() => {
           let prefix = prefix.unwrap();
           if prefix.nick() != conn.me().nick() {
             info!("{} left channel", String::from_utf8_lossy(prefix.nick()).to_string());
-            self.chanmgr.handle_part(
-              String::from_utf8_lossy(args[0].as_slice()).as_slice(),
-              String::from_utf8_lossy(prefix.nick()).as_slice()
-            );
+            self.chanmgr.find_mut(String::from_utf8_lossy(args[0].as_slice()).as_slice())
+              .map(|chan| chan.handle_part(String::from_utf8_lossy(prefix.nick()).as_slice()));
           }
         },
         "PRIVMSG" | "NOTICE" => {
