@@ -34,6 +34,7 @@ use chrono::{
 
 mod banmanager;
 mod channelmanager;
+mod private; // private data
 mod rules;
 mod usermanager;
 
@@ -44,6 +45,7 @@ fn main() {
     nick: "NoFunBot".to_string(),
     server: "irc.quakenet.org".to_string(),
     port: 6667,
+    nspass: private::NICKSERV_PASSWORD.to_string(),
   });
 }
 pub enum RulesCheckResult {
@@ -56,6 +58,7 @@ pub struct Config {
   nick: String,
   server: String,
   port: u16,
+  nspass: String,
 }
 
 pub struct NoFunBot {
@@ -95,7 +98,12 @@ impl NoFunBot {
 
     match line {
       Line{command: IRCCode(1), ..} => {
-        info!("Logged in");
+        info!("Connected, IDing with nickserv");
+        conn.privmsg(b"Q@CServe.quakenet.org", format!("AUTH {} {}",
+                                                       self.config.nick,
+                                                       self.config.nspass
+                                                       ).as_bytes());
+
         self.chanmgr.join_channels(conn);
       },
       Line{command: IRCCode(353), ref args, ..} => {
@@ -192,11 +200,18 @@ impl NoFunBot {
       let valid_command = if msg.as_slice().starts_with(self.config.nick.as_slice()) {
         // we are being addressed!
         // m'lady
-        let mut args: Vec<&str> = msg.as_slice().split(' ').collect();
+        
+        // split on ' ', ignoring superfluous whitespace
+        let mut args: Vec<&str> = msg.as_slice().trim_chars(' ')
+          .split(' ').collect();
+
         debug!("{}", args);
+
+        // "NoFunBot:"
         if args.len() > 0 {
           *args.get_mut(0) = args.get(0).trim_right_chars(':');
         }
+
         let mynick = self.config.nick.as_slice();
         match args.as_slice() {
           [mynick, "stopword", word] => {
@@ -259,10 +274,11 @@ impl NoFunBot {
 
         if userstate.infractions < 3 {
           // let them off w/ a warning
-          conn.privmsg(nick.as_bytes(), format!("{} Please read the channel rules: http://goo.gl/4T6EZR . {} warning{} left until you are banned.",
+          conn.privmsg(nick.as_bytes(), format!("{} Please read the channel rules: http://goo.gl/4T6EZR . After {} more infraction{}, you will be banned for {}m!",
                                                 warn_msg,
-                                                2 - userstate.infractions,
-                                                if (2 - userstate.infractions == 1) {""} else {"s"}
+                                                3 - userstate.infractions,
+                                                if (3 - userstate.infractions == 1) {""} else {"s"},
+                                                self.banmgr.get_ban_length().num_minutes()
                                                ).as_bytes());
           self.chanmgr.log_to_control_channels(conn, format!("Warning {}: {} {} infractions.", nick, warn_msg, userstate.infractions).as_slice()); 
         } else {

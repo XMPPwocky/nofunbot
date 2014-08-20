@@ -8,8 +8,8 @@ pub fn check(msg: &str, state: &mut ::UserState) -> ::RulesCheckResult {
   debug!("Scoring message: {}", msg);
   // todo: these could be cached somewhere
   let regexes = [
-    regex!(r"(?i)k[a@e3][e3p]p[ao@]"), // kappas
-    regex!(r"(?i)doge"), // nice meme
+    regex!(r"(?i)^k[a@e3][e3p]p[ao@]$"), // kappas
+    regex!(r"(?i)^doge$"), // nice meme
     regex!(r"(?i)lenny[ ]?face"),
     regex!(r"BibleThump"),
     regex!(r"blis donate"),
@@ -26,12 +26,13 @@ pub fn check(msg: &str, state: &mut ::UserState) -> ::RulesCheckResult {
     }
   }
 
-  if regex!(r"\s+[^$]").find_iter(msg).count() < 2 && time_since_last.num_seconds() <= 3 {
+  // single word messages are bad
+  if regex!(r"\s+[^$]").find_iter(msg.trim_chars(' ')).count() == 0 && time_since_last.num_seconds() <= 3 {
     state.simple_msg_count += 1;
 
     if state.simple_msg_count >= 3 {
       state.simple_msg_count = 0;
-      return Infraction("Please try to talk on one line.")
+      return Infraction("Please use longer sentences, instead of many short ones")
     }
   } else {
     state.simple_msg_count = 0;
