@@ -100,8 +100,6 @@ impl NoFunBot {
                                                        self.config.nick,
                                                        self.config.nspass
                                                        ).as_bytes());
-
-        self.chanmgr.join_channels(conn);
       },
       Line{command: IRCCode(353), ref args, ..} => {
         // NAMES
@@ -162,7 +160,12 @@ impl NoFunBot {
           let dsts = String::from_utf8_lossy(dst.as_slice()).into_string();
           let srcs = String::from_utf8_lossy(src.as_slice()).into_string();
           let msgs = String::from_utf8_lossy(msg.as_slice()).into_string();
-          self.handle_privmsg(conn, msgs, srcs, dsts)
+          if msgs.as_slice().starts_with("You are now logged in as") {
+            info!("NickServ OK, joining channels");
+            self.chanmgr.join_channels(conn);
+          } else {
+            self.handle_privmsg(conn, msgs, srcs, dsts)
+          }
         }
         _ => ()
       },
@@ -211,14 +214,21 @@ impl NoFunBot {
         }
 
         match args.as_slice() {
-          /*[_mynick, "stopword", word] => {
+          [_mynick, "stopword", ..words] => {
             if self.chanmgr.nick_in_control_channels(src.as_slice()) {
-              //self.stopword(word)
+              let word = words.iter().fold(String::new(), |state, elem| state.append(*elem));
+
+              conn.privmsg(dst.as_bytes(), format!("Okay, {}, next person to say {} gets kickbanned!",
+                                                   src,
+                                                   word).as_slice().as_bytes());
+
+              self.chanmgr.find_mut(dst.as_slice()).expect("Channel not found!").set_stopword(Some(word));
+
               true
             } else {
               false
             }
-          },*/
+          },
           [_mynick, "forgive", target_nick] => {
             if self.chanmgr.nick_in_control_channels(src.as_slice()) {
               info!("Forgiving {} by {}'s request...", target_nick, src)
@@ -261,8 +271,19 @@ impl NoFunBot {
     }
   }
   pub fn moderate(&mut self, conn: &mut Conn, nick: String, channel: &str, msg: String) {
+    // early stopword check
+    let stopword_detected = match self.chanmgr.find(channel).and_then(|ch| ch.get_stopword()) {
+      Some(stopword) if msg.as_slice().contains(stopword) => true,
+      _ => false
+    };
+    if stopword_detected {
+      self.chanmgr.log_to_control_channels(conn, format!("Banned {} for stopword violation", nick).as_slice());
+      self.banmgr.ban(conn, channel, nick.as_slice());
+      self.chanmgr.find_mut(channel).map(|ch| ch.set_stopword(None));
+    };
+
     let userstate = self.usermgr.get_or_create(nick.as_slice());
-    
+
     match rules::check(msg.as_slice(), userstate) {
       Infraction(warn_msg) => {
         // that's a paddlin'
@@ -282,7 +303,6 @@ impl NoFunBot {
           info!("Kicking!");
 
           userstate.infractions = 0;
-          userstate.ban_expiration = Some(chrono::UTC::now() + chrono::duration::Duration::minutes(30));
           self.chanmgr.log_to_control_channels(conn, format!("Banning {}: {}", nick, warn_msg).as_slice());
           self.banmgr.ban(conn, channel, nick.as_slice());
         }

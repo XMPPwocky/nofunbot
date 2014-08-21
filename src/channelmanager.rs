@@ -14,6 +14,8 @@ pub struct IRCChannel {
 
   nicks: HashSet<String>,
   joined: bool,
+  
+  stopword: Option<String>
 }
 
 /// keeps track of all the channels we're in,
@@ -39,7 +41,8 @@ impl ChannelManager {
       name: name.to_string(),
       chantype: chantype,
       nicks: HashSet::new(),
-      joined: false
+      joined: false,
+      stopword: None
     });
   }
 
@@ -95,5 +98,15 @@ impl IRCChannel {
 
   pub fn contains_nick(&self, nick: &str) -> bool {
     self.nicks.contains_equiv(&nick)
+  }
+
+  pub fn get_stopword<'a>(&'a self) -> Option<&'a str> {
+    match self.stopword {
+      Some(ref sw) => Some(sw.as_slice()),
+      None => None
+    }
+  }
+  pub fn set_stopword<'a>(&mut self, stopword: Option<String>) {
+    self.stopword = stopword;
   }
 }
