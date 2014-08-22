@@ -1,5 +1,6 @@
 use chrono::{Duration, DateTime, UTC};
 use irc::conn::{Conn,IRCCmd};
+use irc;
 
 struct Ban {
   mask: String,
@@ -25,11 +26,11 @@ impl BanManager {
   }
 
   /// Bans a nick. TODO: this can't extend existing bans
-  pub fn ban(&mut self, conn: &mut Conn, channel: &str, nick: &str) {
+  pub fn ban(&mut self, conn: &mut Conn, channel: &str, user: &irc::User) {
     //conn.send_command(IRCCmd("KICK".into_maybe_owned()),
     //  [channel.as_bytes(), nick.as_bytes(), b"Temp-banned"], true);
 
-    let banmask = format!("{}!*@*", nick);
+    let banmask = format!("*!*@{}", String::from_utf8_lossy(user.host().expect("No hostname?")));
     info!("Setting +b on {}", banmask);
 
     conn.send_command(IRCCmd("MODE".into_maybe_owned()), [channel.as_bytes(), b"+b", banmask.as_bytes()], false);

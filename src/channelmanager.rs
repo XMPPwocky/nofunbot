@@ -37,13 +37,7 @@ impl ChannelManager {
 
   /// Adds a channel to the list.
   pub fn add_channel(&mut self, name: &str, chantype: ChannelType) {
-    self.channels.insert(name.to_string(), IRCChannel {
-      name: name.to_string(),
-      chantype: chantype,
-      nicks: HashSet::new(),
-      joined: false,
-      stopword: None
-    });
+    self.channels.insert(name.to_string(), IRCChannel::new(name, chantype));
   }
 
   /// Joins any channels we are not already in.
@@ -66,8 +60,8 @@ impl ChannelManager {
       conn.privmsg(name.as_slice().as_bytes(), msg.as_bytes());
     }
   }
-  /// Is a given nick in any control channels? (etc. an operator)
-  pub fn nick_in_control_channels(&self, nick: &str) -> bool {
+  /// Is a given nick in any control channels? (etc. a mod)
+  pub fn nick_is_mod(&self, nick: &str) -> bool {
     for (_, chan) in self.channels.iter().filter(|&(_, s)| s.chantype == Control) {
       if chan.contains_nick(nick) {
         return true;
@@ -78,6 +72,16 @@ impl ChannelManager {
 }
 
 impl IRCChannel {
+  fn new(name: &str, chantype: ChannelType) -> IRCChannel {
+    IRCChannel {
+      name: name.to_string(),
+      chantype: chantype,
+      nicks: HashSet::new(),
+      joined: false,
+      stopword: None
+    }
+  }
+
   /// We have successfully joined a channel! Hooray!
   pub fn join_ok(&mut self) {
     self.joined = true
@@ -108,5 +112,40 @@ impl IRCChannel {
   }
   pub fn set_stopword<'a>(&mut self, stopword: Option<String>) {
     self.stopword = stopword;
+  }
+}
+
+#[cfg(test)]
+mod test {
+  use super::{IRCChannel, Moderate};
+
+  #[test]
+  fn nick_tracking() {
+    let test_nick = "fredbloggs";
+
+    let mut chan = IRCChannel::new("#test", Moderate);
+    assert!(!chan.contains_nick(test_nick));
+
+    chan.handle_join(test_nick);
+    assert!(chan.contains_nick(test_nick));
+    
+    chan.handle_part(test_nick);
+    assert!(!chan.contains_nick(test_nick));
+  }
+
+  /// Multiple joins should not stack
+  #[test]
+  fn duplicate_nicks() {
+    let test_nick = "fredbloggs";
+
+    let mut chan = IRCChannel::new("#test", Moderate);
+    
+    for _ in range(0u, 10) {
+      chan.handle_join(test_nick);
+    }
+    assert!(chan.contains_nick(test_nick));
+    
+    chan.handle_part(test_nick);
+    assert!(!chan.contains_nick(test_nick));
   }
 }
