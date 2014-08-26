@@ -47,6 +47,7 @@ fn main() {
 }
 pub enum RulesCheckResult {
   Infraction(&'static str),
+  Ticket((uint, uint), &'static str),
   RulesOK
 }
 pub enum CommandValidity {

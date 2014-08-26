@@ -1,13 +1,13 @@
 use flate;
 use chrono;
 
-use {Infraction, RulesOK};
+use {Infraction, Ticket, RulesOK};
 pub fn check(msg: &str, state: &mut ::UserState) -> ::RulesCheckResult {
   let time_since_last = chrono::UTC::now() - state.last_message_time;
   debug!("Scoring message: {}", msg);
   // todo: these could be cached somewhere
   let regexes = [
-    regex!(r"(?i)^k[a@e3][e3p]p[ao@]$"), // kappas
+    regex!(r"(?i)k[a@e3][e3p]p[ao@]"), // kappas
     regex!(r"(?i)^doge$"), // nice meme
     regex!(r"(?i)lenny[ ]?face"),
     regex!(r"BibleThump"),
@@ -20,8 +20,14 @@ pub fn check(msg: &str, state: &mut ::UserState) -> ::RulesCheckResult {
     regex!(r"pl[sz] no .*erino"), // pls no spammerino
   ];
   for re in regexes.iter() {
-    if re.is_match(msg) {
-      return Infraction("This isn't Twitch chat.")
+    match re.find(msg) {
+      Some((start, end)) if start == 0 && end == msg.len() => {
+        return Infraction("This isn't Twitch chat.");
+      },
+      Some((start, end)) => {
+        return Ticket((start, end), "This isn't Twitch chat.")
+      },
+      None => ()
     }
   }
 
