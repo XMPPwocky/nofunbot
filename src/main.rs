@@ -234,10 +234,9 @@ impl NoFunBot {
   pub fn moderate(&mut self, conn: &mut Conn, user: &irc::User, channel: &str, msg: String) {
     let nick = String::from_utf8_lossy(user.nick()).to_string();
     // early stopword check
-    let stopword_detected = match self.chanmgr.find(channel).and_then(|ch| ch.get_stopword()) {
-      Some(stopword) if msg.as_slice().contains(stopword) => true,
-      _ => false
-    };
+    let stopword_detected = self.chanmgr.find(channel).and_then(|ch| ch.get_stopword())
+      .filtered(|&stopword| msg.as_slice().contains(stopword)).is_some();
+    
     if stopword_detected {
       self.chanmgr.log_to_control_channels(conn, format!("Banned {} for stopword violation", nick).as_slice());
       self.banmgr.ban(conn, channel, user);
@@ -309,7 +308,7 @@ impl NoFunBot {
             },
             None => {
               warn!("Invalid ban length!");
-              CommandValid
+              CommandNotValid
             }
           }
         },
