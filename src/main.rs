@@ -33,6 +33,7 @@ mod banmanager;
 mod channelmanager;
 mod private; // private data
 mod rules;
+mod ticket;
 mod usermanager;
 
 fn main() {
@@ -269,6 +270,21 @@ impl NoFunBot {
           self.banmgr.ban(conn, channel, user);
         }
       },
+      Ticket((start, end), warn_msg) => {
+        // display fancy colors around matching portion
+        let header = format!("Infraction detected: {} said \"", nick);
+        let mut buf = Vec::from_slice(header.as_bytes());
+        let mut offset = buf.len();
+        buf = buf.append(msg.as_bytes());
+
+        buf.insert(start + offset, 0x03); offset += 1;
+        buf.insert(start + offset, '4' as u8); offset += 1;
+        buf.insert(end + offset, 0x03); offset += 1;
+        buf.insert(end + offset, 0x03); offset += 1;
+        let buflen = buf.len(); // oh hi borrowck
+        buf.insert(buflen, '"' as u8); // close quote
+        self.chanmgr.log_to_control_channels_bytes(conn, buf.as_slice());
+      }
       RulesOK => ()
     }
 

@@ -54,10 +54,13 @@ impl ChannelManager {
   pub fn find_mut<'a>(&'a mut self, name: &str) -> Option<&'a mut IRCChannel> {
     self.channels.mut_iter().find(|&(ref k, _)| k.as_slice() == name).map(|(_, v)| v)
   }
-  /// Prints to all control channels.
   pub fn log_to_control_channels(&self, conn: &mut Conn, msg: &str) {
+    self.log_to_control_channels_bytes(conn, msg.as_bytes());
+  }
+  /// Prints a raw slice of bytes to all control channels.
+  pub fn log_to_control_channels_bytes(&self, conn: &mut Conn, msg: &[u8]) {
     for (name, _) in self.channels.iter().filter(|&(_, s)| s.chantype == Control) {
-      conn.privmsg(name.as_slice().as_bytes(), msg.as_bytes());
+      conn.privmsg(name.as_slice().as_bytes(), msg);
     }
   }
   /// Is a given nick in any control channels? (etc. a mod)
